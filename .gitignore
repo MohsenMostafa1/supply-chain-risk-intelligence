@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.log
+*.pkl
+*.parquet
+.env
+data/raw/*
+data/processed/*
+mlruns/
+*.db
+terraform/.terraform/
