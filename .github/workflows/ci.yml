@@ -81,25 +81,23 @@ jobs:
         name: codecov-umbrella
         fail_ci_if_error: false
 
+    # ---------------------------
+    # Wait for Kafka port to be open (using bash + nc)
+    # ---------------------------
     - name: Wait for Kafka port to be open
       run: |
-        python -c "
-import socket, time
-start = time.time()
-while True:
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1)
-        sock.connect(('localhost', 9092))
-        sock.close()
-        print('Kafka port open. Waiting extra 10 seconds...')
-        time.sleep(10)
-        break
-    except:
-        if time.time() - start > 90:
-            raise SystemExit('Kafka not reachable after 90 seconds')
-        time.sleep(2)
-"
+        echo "Waiting for Kafka port 9092..."
+        for i in {1..45}; do
+          if nc -z localhost 9092 2>/dev/null; then
+            echo "Kafka port open. Waiting extra 10 seconds..."
+            sleep 10
+            exit 0
+          fi
+          echo "Attempt $i: port 9092 not ready, sleeping 2s"
+          sleep 2
+        done
+        echo "Timeout after 90 seconds"
+        exit 1
       if: always()
 
     - name: Create Kafka topic
