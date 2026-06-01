@@ -10,7 +10,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     
-    # Service containers for integration tests (optional, but included)
+    # Service containers for integration tests
     services:
       zookeeper:
         image: confluentinc/cp-zookeeper:latest
@@ -65,9 +65,7 @@ jobs:
 
     - name: Lint with flake8
       run: |
-        # stop the build if there are Python syntax errors or undefined names
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings (optional)
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
     - name: Run unit tests with PYTHONPATH
@@ -76,7 +74,7 @@ jobs:
       env:
         PYTHONPATH: .
 
-    - name: Upload coverage to Codecov (optional)
+    - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
         file: ./coverage.xml
@@ -84,10 +82,28 @@ jobs:
         name: codecov-umbrella
         fail_ci_if_error: false
 
-    # Integration tests (optional, requires Kafka and PostgreSQL to be up)
-    - name: Wait for services to be ready
+    # --------------------------------------------
+    # Integration tests – wait for Kafka to be ready
+    # --------------------------------------------
+    - name: Wait for Kafka to be ready
       run: |
-        sleep 15  # Give Kafka and PostgreSQL extra time to fully start
+        echo "Waiting for Kafka to become available..."
+        timeout=60
+        start_time=$(date +%s)
+        while true; do
+          if python -c "from kafka import KafkaConsumer; KafkaConsumer(bootstrap_servers='localhost:9092', request_timeout_ms=5000).partitions_for_topic('__consumer_offsets')" 2>/dev/null; then
+            echo "Kafka is ready!"
+            break
+          fi
+          current_time=$(date +%s)
+          elapsed=$((current_time - start_time))
+          if [ $elapsed -ge $timeout ]; then
+            echo "Timeout waiting for Kafka after ${timeout} seconds"
+            exit 1
+          fi
+          echo "Kafka not ready yet, waiting 2 seconds..."
+          sleep 2
+        done
       if: always()
 
     - name: Run integration tests
@@ -95,5 +111,5 @@ jobs:
         PYTHONPATH=. pytest tests/integration/ -v
       env:
         PYTHONPATH: .
-      # Continue even if integration tests fail (they might need more setup)
+      # If integration tests still fail, mark as warning but don't break the build
       continue-on-error: true
