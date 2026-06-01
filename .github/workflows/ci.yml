@@ -22,9 +22,13 @@ jobs:
         ports:
           - 9092:9092
         env:
-          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_BROKER_ID: 1
           KAFKA_ZOOKEEPER_CONNECT: localhost:2181
+          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:9092
           KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       postgres:
         image: postgres:14
         ports:
@@ -81,30 +85,46 @@ jobs:
         name: codecov-umbrella
         fail_ci_if_error: false
 
-    # ---------------------------
-    # Wait for Kafka port to be open (using bash + nc)
-    # ---------------------------
+    # -----------------------------------------
+    # Debugging: check if Kafka container is running
+    # -----------------------------------------
+    - name: Check Kafka container status
+      run: |
+        echo "Listing all containers:"
+        docker ps -a
+        echo "Kafka container logs:"
+        docker logs $(docker ps -aq --filter ancestor=confluentinc/cp-kafka:latest) || true
+      if: always()
+
+    # -----------------------------------------
+    # Wait for Kafka port to be open (using nc)
+    # -----------------------------------------
     - name: Wait for Kafka port to be open
       run: |
         echo "Waiting for Kafka port 9092..."
-        for i in {1..45}; do
-          if nc -z localhost 9092 2>/dev/null; then
-            echo "Kafka port open. Waiting extra 10 seconds..."
+        timeout=120
+        start=$(date +%s)
+        while true; do
+          if nc -z 127.0.0.1 9092 2>/dev/null; then
+            echo "Kafka port open. Waiting extra 10 seconds for broker stability..."
             sleep 10
-            exit 0
+            break
           fi
-          echo "Attempt $i: port 9092 not ready, sleeping 2s"
+          now=$(date +%s)
+          if [ $((now - start)) -ge $timeout ]; then
+            echo "Timeout after ${timeout} seconds. Kafka never became ready."
+            exit 1
+          fi
+          echo "Port 9092 not ready, retrying in 2 seconds..."
           sleep 2
         done
-        echo "Timeout after 90 seconds"
-        exit 1
       if: always()
 
     - name: Create Kafka topic
       run: |
         docker run --rm --network host confluentinc/cp-kafka:latest kafka-topics \
           --create --topic iot-sensor-data \
-          --bootstrap-server localhost:9092 \
+          --bootstrap-server 127.0.0.1:9092 \
           --partitions 1 --replication-factor 1 || true
       if: always()
 
