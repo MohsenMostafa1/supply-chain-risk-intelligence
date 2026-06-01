@@ -1,37 +1,37 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, window, avg, to_timestamp
+from pyspark.sql.functions import from_json, col, window, avg, to_timestamp, udf
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType, MapType
-import requests
-import logging
 
 # -------------------------------
-# Helper function (no Spark dependency)
+# Pure Python helper function – no Spark dependencies
+# This can be imported by unit tests safely.
 # -------------------------------
 def score_anomaly(row):
     """Return 1.0 if anomaly (vibration > 3.0), else 0.0."""
     return 1.0 if row.get("avg_vib", 0) > 3.0 else 0.0
 
+
 # -------------------------------
-# Main execution – only runs when script is executed directly
+# Main entry point – all Spark code goes here
 # -------------------------------
 if __name__ == "__main__":
-    # 1. Spark Session
+    # Spark session
     spark = SparkSession.builder \
         .appName("OrionValley_StreamingAnomaly") \
         .config("spark.sql.streaming.checkpointLocation", "/tmp/checkpoints") \
         .getOrCreate()
 
-    # 2. Schema definition (fixed MapType)
+    # Schema definition (fixed: use instances, not classes)
     schema = StructType([
         StructField("vehicle_id", StringType()),
         StructField("timestamp", StringType()),
         StructField("temperature", DoubleType()),
         StructField("vibration", DoubleType()),
         StructField("rpm", IntegerType()),
-        StructField("location", MapType(StringType(), DoubleType()))
+        StructField("location", MapType(StringType(), DoubleType()))   # Note parentheses
     ])
 
-    # 3. Read from Kafka
+    # Read from Kafka
     df_raw = spark.readStream \
         .format("kafka") \
         .option("kafka.bootstrap.servers", "localhost:9092") \
@@ -43,7 +43,7 @@ if __name__ == "__main__":
         .select("data.*") \
         .withColumn("event_time", to_timestamp(col("timestamp")))
 
-    # 4. Windowed aggregates
+    # Windowed aggregates
     windowed_stats = df_raw \
         .withWatermark("event_time", "10 seconds") \
         .groupBy(
@@ -56,12 +56,11 @@ if __name__ == "__main__":
             avg("rpm").alias("avg_rpm")
         )
 
-    # 5. Apply anomaly scoring (using the helper function)
-    from pyspark.sql.functions import udf
+    # Anomaly scoring UDF
     score_udf = udf(score_anomaly, DoubleType())
     anomalies = windowed_stats.withColumn("anomaly_score", score_udf(col("avg_vib")))
 
-    # 6. Write anomalies to MongoDB (using foreachBatch)
+    # Write to MongoDB
     def write_to_mongo(df, epoch_id):
         df.write \
             .format("mongo") \
@@ -69,7 +68,7 @@ if __name__ == "__main__":
             .option("uri", "mongodb://localhost:27017/orion.anomalies") \
             .save()
 
-    # 7. Write raw data to HDFS (Parquet)
+    # Write raw data to HDFS
     raw_stream = df_raw.selectExpr("vehicle_id", "timestamp", "temperature", "vibration", "rpm", "location")
 
     hdfs_query = raw_stream.writeStream \
@@ -86,6 +85,5 @@ if __name__ == "__main__":
         .trigger(processingTime="10 seconds") \
         .start()
 
-    # 8. Wait for termination
     hdfs_query.awaitTermination()
     mongo_query.awaitTermination()
