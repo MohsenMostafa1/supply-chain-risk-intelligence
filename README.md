@@ -1,6 +1,5 @@
 # supply-chain-risk-intelligence
 
-
 Data flow summary:
 
     IoT sensors → Kafka → two parallel paths:
